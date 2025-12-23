@@ -1,4 +1,4 @@
-# Roast Package Registry - Cloudflare Workers
+# Roast Package Registry
 
 A complete package registry server for the Roast language, deployable to Cloudflare Workers.
 
@@ -7,14 +7,24 @@ A complete package registry server for the Roast language, deployable to Cloudfl
 - 📦 **Package Management**: Publish, download, search packages
 - 🔐 **Authentication**: Token-based auth for publishing
 - ✍️ **Signing Support**: Package signatures and publisher verification
-- 🗄️ **R2 Storage**: Package tarballs stored in Cloudflare R2
+- 🗄️ **Turso Database**: SQLite-based edge database for metadata
+- 📁 **R2 Storage**: Package tarballs stored in Cloudflare R2
 - ⚡ **Edge Computing**: Fast global access via Cloudflare's edge network
-- 🔍 **Search**: Full-text search across packages
+- 🔍 **Search**: Full SQL-powered search across packages
+
+## Tech Stack
+
+| Component | Technology |
+|-----------|------------|
+| Compute | Cloudflare Workers |
+| Database | Turso (libSQL) |
+| File Storage | Cloudflare R2 |
+| Language | TypeScript |
 
 ## Prerequisites
 
 1. [Cloudflare Account](https://dash.cloudflare.com/sign-up)
-2. [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/)
+2. [Turso Account](https://turso.tech/)
 3. Node.js 18+
 
 ## Setup
@@ -22,73 +32,111 @@ A complete package registry server for the Roast language, deployable to Cloudfl
 ### 1. Install Dependencies
 
 ```bash
-cd registry-server
 npm install
 ```
 
-### 2. Configure Cloudflare Resources
+### 2. Install CLIs
 
-First, log in to Wrangler:
 ```bash
+# Turso CLI
+curl -sSfL https://get.tur.so/install.sh | bash
+
+# Login to both services
+turso auth login
 npx wrangler login
 ```
 
-Create the required KV namespaces:
+### 3. Create Turso Database
+
 ```bash
-# Package metadata
-npx wrangler kv:namespace create PACKAGES
-npx wrangler kv:namespace create PACKAGES --preview
+# Create database
+turso db create roast-registry --location sjc
 
-# User data
-npx wrangler kv:namespace create USERS
-npx wrangler kv:namespace create USERS --preview
-
-# API tokens
-npx wrangler kv:namespace create TOKENS
-npx wrangler kv:namespace create TOKENS --preview
+# Get credentials (save these!)
+turso db show roast-registry --url
+turso db tokens create roast-registry
 ```
 
-Create the R2 bucket:
+### 4. Create Database Tables
+
+```bash
+turso db shell roast-registry
+```
+
+```sql
+CREATE TABLE packages (
+    name TEXT PRIMARY KEY,
+    description TEXT DEFAULT '',
+    authors TEXT DEFAULT '[]',
+    license TEXT DEFAULT 'MIT',
+    repository TEXT,
+    homepage TEXT,
+    keywords TEXT DEFAULT '[]',
+    downloads INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    package_name TEXT NOT NULL,
+    version TEXT NOT NULL,
+    published_at TEXT NOT NULL,
+    yanked INTEGER DEFAULT 0,
+    checksum TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    signature TEXT,
+    publisher_fingerprint TEXT,
+    UNIQUE(package_name, version)
+);
+
+CREATE TABLE users (
+    id TEXT PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE tokens (
+    token TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE user_packages (
+    user_id TEXT NOT NULL,
+    package_name TEXT NOT NULL,
+    PRIMARY KEY (user_id, package_name)
+);
+
+.quit
+```
+
+### 5. Create R2 Bucket
+
 ```bash
 npx wrangler r2 bucket create roast-packages
 ```
 
-### 3. Update wrangler.toml
-
-Copy the namespace IDs from the commands above into `wrangler.toml`:
-
-```toml
-[[kv_namespaces]]
-binding = "PACKAGES"
-id = "your-packages-kv-id"
-preview_id = "your-packages-preview-id"
-
-[[kv_namespaces]]
-binding = "USERS"
-id = "your-users-kv-id"
-preview_id = "your-users-preview-id"
-
-[[kv_namespaces]]
-binding = "TOKENS"
-id = "your-tokens-kv-id"
-preview_id = "your-tokens-preview-id"
-```
-
-### 4. Set Secrets
+### 6. Set Secrets in Cloudflare
 
 ```bash
-# Admin token for administrative operations
+# Turso Database URL
+npx wrangler secret put TURSO_DATABASE_URL
+# Enter: libsql://roast-registry-<username>.turso.io
+
+# Turso Auth Token
+npx wrangler secret put TURSO_AUTH_TOKEN
+# Enter: <your-turso-token>
+
+# Admin Token (generate: openssl rand -hex 32)
 npx wrangler secret put ADMIN_TOKEN
-# Enter a strong random token when prompted
-
-# JWT secret (optional, for future JWT auth)
-npx wrangler secret put JWT_SECRET
 ```
 
-### 5. Deploy
+### 7. Deploy
 
 ```bash
-# Development (local)
+# Local development
 npm run dev
 
 # Production
@@ -134,14 +182,9 @@ X-Package-Description: My awesome package
 <tarball binary data>
 ```
 
-### Yank Version
+### Yank/Unyank Version
 ```
 POST /api/v1/packages/:name/:version/yank
-Authorization: Bearer <token>
-```
-
-### Unyank Version
-```
 POST /api/v1/packages/:name/:version/unyank
 Authorization: Bearer <token>
 ```
@@ -157,7 +200,7 @@ Content-Type: application/json
 }
 ```
 
-Response includes your API token:
+Response:
 ```json
 {
   "message": "User registered successfully",
@@ -166,9 +209,24 @@ Response includes your API token:
 }
 ```
 
-## Custom Domain
+## Environment Variables
 
-To use a custom domain like `registry.roast-lang.org`:
+### Secrets (set via `wrangler secret put`)
+
+| Name | Description |
+|------|-------------|
+| `TURSO_DATABASE_URL` | Turso database URL |
+| `TURSO_AUTH_TOKEN` | Turso auth token |
+| `ADMIN_TOKEN` | Admin authentication token |
+
+### Variables (in wrangler.toml)
+
+| Name | Description |
+|------|-------------|
+| `REGISTRY_NAME` | Display name for the registry |
+| `REGISTRY_VERSION` | API version |
+
+## Custom Domain
 
 1. Add your domain to Cloudflare
 2. Update `wrangler.toml`:
@@ -179,62 +237,38 @@ routes = [
 ]
 ```
 
-3. Redeploy:
-```bash
-npm run deploy
-```
+3. Redeploy: `npm run deploy`
 
-## Using with Kitchen (Roast Package Manager)
-
-Configure kitchen to use your registry:
+## Using with Kitchen
 
 ```toml
 # ~/.config/kitchen/config.toml
 [registry]
 url = "https://registry.roast-lang.org"
-# or your workers.dev URL
-# url = "https://roast-registry.your-account.workers.dev"
 ```
 
-Login with your token:
 ```bash
-kitchen login
-# Enter your API token
+kitchen login    # Enter your API token
+kitchen publish  # Publish a package
 ```
 
-Publish a package:
-```bash
-kitchen publish
-```
+## Cost (Free Tier)
 
-## Cost Estimation
+| Service | Free Allocation |
+|---------|-----------------|
+| Cloudflare Workers | 100K requests/day |
+| Turso | 9 GB storage, 1B row reads/month |
+| Cloudflare R2 | 10 GB storage, 10M reads/month |
 
-Cloudflare Workers has a generous free tier:
-- **Workers**: 100,000 requests/day free
-- **KV**: 100,000 reads/day, 1,000 writes/day free
-- **R2**: 10 GB storage, 10 million reads/month free
-
-For a small-to-medium registry, this should be completely free.
+**Total: $0/month** for small-to-medium registries.
 
 ## Development
 
 ```bash
-# Run locally with wrangler dev
-npm run dev
-
-# View logs
-npm run tail
-
-# Deploy to production
-npm run deploy
+npm run dev      # Local development
+npm run deploy   # Deploy to production
+npm run tail     # View logs
 ```
-
-## Security Considerations
-
-1. **ADMIN_TOKEN**: Keep this secret, use a strong random value
-2. **Rate Limiting**: Consider adding rate limiting for publish endpoints
-3. **Package Validation**: The current implementation does basic validation; consider adding more thorough tarball inspection
-4. **Signature Verification**: Implement signature verification in `handlePublishPackage` for production use
 
 ## License
 
