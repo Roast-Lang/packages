@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.wrangler/
+
+# Environment & secrets
+.env
+.env.local
+.dev.vars
+
+# IDE
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
+
+# Logs
+*.log
+
+# TypeScript cache
+*.tsbuildinfo

@@ -1,0 +1,42 @@
+name = "roast-registry"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+assets = { directory = "public" }
+
+# Account ID - replace with your Cloudflare account ID
+# account_id = "your-account-id"
+
+# Optional: Custom domain
+# routes = [
+#   { pattern = "registry.roast-lang.org/*", zone_name = "roast-lang.org" }
+# ]
+
+# KV Namespace for package metadata
+[[kv_namespaces]]
+binding = "PACKAGES"
+id = "your-kv-namespace-id"
+# preview_id = "your-preview-kv-id"
+
+# KV Namespace for user authentication
+[[kv_namespaces]]
+binding = "USERS"
+id = "your-users-kv-id"
+
+# KV Namespace for API tokens
+[[kv_namespaces]]
+binding = "TOKENS"
+id = "your-tokens-kv-id"
+
+# R2 Bucket for package tarballs
+[[r2_buckets]]
+binding = "TARBALLS"
+bucket_name = "roast-packages"
+
+# Environment variables
+[vars]
+REGISTRY_NAME = "Roast Package Registry"
+REGISTRY_VERSION = "0.1.0"
+
+# Secrets (set via wrangler secret put)
+# - ADMIN_TOKEN: Admin authentication token
+# - JWT_SECRET: Secret for signing JWT tokens
